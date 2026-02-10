@@ -1,0 +1,17 @@
+Cozy Bake Project Files
+=======================
+
+Config: package.json, tsconfig.json, tsconfig.node.json, vite.config.ts, tailwind.config.js, postcss.config.js, .gitignore, .env.example, index.html
+
+Docs: README.md, QUICKSTART.md, LEARNING_GUIDE.md, PROJECT_STRUCTURE.md, PROJECT_SUMMARY.md, START_HERE.md
+
+Src:
+  Entry: src/main.tsx, src/App.tsx, src/index.css
+  Components: src/components/BottomNav.tsx, SearchBar.tsx, RecipeCard.tsx, RecipeListItem.tsx, CategoryButton.tsx
+  Pages: src/pages/HomePage.tsx, ExplorePage.tsx, RecipeDetailPage.tsx, FavoritesPage.tsx, SettingsPage.tsx
+  Store: src/stores/useAppStore.ts
+  Types: src/types/index.ts
+  Data: src/data/mockData.ts
+  Utils: src/utils/helpers.ts
+
+Total: 29 files (23 code + 6 docs)
