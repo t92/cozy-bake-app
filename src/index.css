@@ -1,0 +1,84 @@
+/**
+ * Tailwind CSS 基础样式导入
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * 全局样式重置和自定义
+ */
+@layer base {
+  /* 设置默认字体和平滑滚动 */
+  body {
+    @apply font-sans antialiased;
+    scroll-behavior: smooth;
+  }
+
+  /* 移除默认边距 */
+  * {
+    @apply m-0 p-0 box-border;
+  }
+}
+
+/**
+ * 自定义工具类
+ */
+@layer utilities {
+  /* 隐藏滚动条但保持滚动功能 */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari and Opera */
+  }
+
+  /* 文本截断 - 单行 */
+  .line-clamp-1 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+  }
+
+  /* 文本截断 - 两行 */
+  .line-clamp-2 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  /* 玻璃态效果 */
+  .glass-effect {
+    @apply bg-white/80 backdrop-blur-md;
+  }
+}
+
+/**
+ * 动画效果
+ */
+@layer components {
+  /* 淡入动画 */
+  .fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* 按钮按下效果 */
+  .btn-press {
+    @apply active:scale-95 transition-transform;
+  }
+}
