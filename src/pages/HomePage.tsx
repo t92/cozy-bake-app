@@ -1,4 +1,5 @@
-import { Bell } from 'lucide-react';
+import { Bot } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import SearchBar from '../components/SearchBar';
 import RecipeCard from '../components/RecipeCard';
 import RecipeListItem from '../components/RecipeListItem';
@@ -17,6 +18,8 @@ import { useAppStore } from '../stores/useAppStore';
  * 5. 最近更新列表
  */
 const HomePage = () => {
+  const navigate = useNavigate();
+
   // 从 store 获取食谱数据
   const recipes = useAppStore((state) => state.recipes);
 
@@ -40,9 +43,14 @@ const HomePage = () => {
             <h1 className="text-2xl font-bold text-gray-800">Cozy Bake</h1>
           </div>
 
-          {/* 通知按钮 */}
-          <button className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-            <Bell size={24} className="text-gray-600" />
+          {/* AI 助手按钮 */}
+          <button
+            type="button"
+            onClick={() => navigate('/ai-chat')}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            aria-label="Open AI assistant"
+          >
+            <Bot size={24} className="text-gray-600" />
           </button>
         </div>
 
