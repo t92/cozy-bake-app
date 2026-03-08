@@ -30,6 +30,7 @@ interface DisplayMessage {
   id: number;
   role: ChatRole;
   content: string;
+  thinking?: string;
 }
 
 interface ChatApiResponse {
@@ -116,6 +117,37 @@ const extractAssistantData = (
   return { content: null };
 };
 
+const extractThinkingText = (payload: unknown): string | null => {
+  if (payload && typeof payload === 'object') {
+    const apiData = payload as ChatApiResponse;
+    return normalizeText(apiData.message?.thinking);
+  }
+
+  return null;
+};
+
+const extractStreamLine = (line: string): unknown | null => {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+
+  const normalized = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
+  if (!normalized || normalized === '[DONE]') return null;
+
+  try {
+    return JSON.parse(normalized) as unknown;
+  } catch {
+    return null;
+  }
+};
+
+const mergeStreamText = (current: string, incoming: string): string => {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  if (incoming.startsWith(current)) return incoming;
+  if (current.startsWith(incoming)) return current;
+  return current + incoming;
+};
+
 const AiChatPage = () => {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<DisplayMessage[]>([
@@ -127,14 +159,38 @@ const AiChatPage = () => {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [hasStreamStarted, setHasStreamStarted] = useState(false);
   const nextIdRef = useRef(Date.now() + 1);
   const listEndRef = useRef<HTMLDivElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const renderTimerRef = useRef<number | null>(null);
+  const thinkingContainerRef = useRef<HTMLDivElement | null>(null);
 
   const canSend = useMemo(() => input.trim().length > 0 && !isLoading, [input, isLoading]);
 
   useEffect(() => {
-    listEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messageListRef.current) {
+      if (isLoading) {
+        // 流式阶段持续贴底，避免“还在思考但页面不动”
+        messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+      } else {
+        listEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
   }, [messages, isLoading]);
+
+  useEffect(() => {
+    if (!thinkingContainerRef.current) return;
+    thinkingContainerRef.current.scrollTop = thinkingContainerRef.current.scrollHeight;
+  }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      if (renderTimerRef.current !== null) {
+        window.clearInterval(renderTimerRef.current);
+      }
+    };
+  }, []);
 
   const sendMessage = async () => {
     const trimmedInput = input.trim();
@@ -146,14 +202,26 @@ const AiChatPage = () => {
       content: trimmedInput,
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const assistantMessageId = nextIdRef.current++;
+    const assistantMessage: DisplayMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+    };
+
+    setMessages((prev) => [...prev, userMessage, assistantMessage]);
     setInput('');
     setIsLoading(true);
+    setHasStreamStarted(false);
+    if (renderTimerRef.current !== null) {
+      window.clearInterval(renderTimerRef.current);
+      renderTimerRef.current = null;
+    }
 
     try {
       const payload: ChatMessage = {
         model: 'qwen3:8b',
-        stream: false,
+        stream: true,
         messages: [{ role: 'user', content: trimmedInput }],
       };
 
@@ -169,33 +237,130 @@ const AiChatPage = () => {
         throw new Error(`API error: ${response.status}`);
       }
 
-      const contentType = response.headers.get('content-type') ?? '';
-      let replyText = '';
-      if (contentType.includes('application/json')) {
-        const json: unknown = await response.json();
-        const parsed = extractAssistantData(json);
-        replyText = parsed.content ?? '';
-      } else {
-        replyText = (await response.text()).trim();
-      }
-
-      const assistantMessage: DisplayMessage = {
-        id: nextIdRef.current++,
-        role: 'assistant',
-        content: replyText || '接口已返回，但未拿到可展示的文本内容。',
+      const updateAssistantMessage = (updater: (prev: string) => string) => {
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === assistantMessageId
+              ? { ...message, content: updater(message.content) }
+              : message
+          )
+        );
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      const updateAssistantThinking = (updater: (prev: string) => string) => {
+        setMessages((prev) =>
+          prev.map((message) => {
+            if (message.id !== assistantMessageId) return message;
+            const currentThinking = message.thinking ?? '';
+            return { ...message, thinking: updater(currentThinking) };
+          })
+        );
+      };
+
+      if (response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let accumulated = '';
+        let accumulatedThinking = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            const parsedLine = extractStreamLine(line);
+            if (!parsedLine) continue;
+
+            const parsedChunk = extractAssistantData(parsedLine);
+            const thinkingChunk = extractThinkingText(parsedLine);
+            if (thinkingChunk) {
+              setHasStreamStarted(true);
+              accumulatedThinking = mergeStreamText(accumulatedThinking, thinkingChunk);
+              updateAssistantThinking(() => accumulatedThinking);
+            }
+
+            if (!parsedChunk.content) continue;
+
+            setHasStreamStarted(true);
+            accumulated = mergeStreamText(accumulated, parsedChunk.content);
+          }
+        }
+
+        const finalLine = extractStreamLine(buffer);
+        if (finalLine) {
+          const parsedChunk = extractAssistantData(finalLine);
+          const thinkingChunk = extractThinkingText(finalLine);
+          if (thinkingChunk) {
+            setHasStreamStarted(true);
+            accumulatedThinking = mergeStreamText(accumulatedThinking, thinkingChunk);
+            updateAssistantThinking(() => accumulatedThinking);
+          }
+
+          if (parsedChunk.content) {
+            setHasStreamStarted(true);
+            accumulated = mergeStreamText(accumulated, parsedChunk.content);
+          }
+        }
+
+        if (accumulated.trim()) {
+          // 正文完整返回后，移除 thinking 并快速逐步渲染正文
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === assistantMessageId ? { ...message, content: '', thinking: '' } : message
+            )
+          );
+
+          let cursor = 0;
+          const step = 6;
+          renderTimerRef.current = window.setInterval(() => {
+            cursor = Math.min(cursor + step, accumulated.length);
+            const nextText = accumulated.slice(0, cursor);
+
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.id === assistantMessageId ? { ...message, content: nextText } : message
+              )
+            );
+
+            if (cursor >= accumulated.length && renderTimerRef.current !== null) {
+              window.clearInterval(renderTimerRef.current);
+              renderTimerRef.current = null;
+            }
+          }, 12);
+        } else {
+          updateAssistantMessage(() => '接口已返回，但未拿到可展示的文本内容。');
+        }
+      } else {
+        const contentType = response.headers.get('content-type') ?? '';
+        let replyText = '';
+
+        if (contentType.includes('application/json')) {
+          const json: unknown = await response.json();
+          const parsed = extractAssistantData(json);
+          replyText = parsed.content ?? '';
+        } else {
+          replyText = (await response.text()).trim();
+        }
+
+        updateAssistantMessage(() => replyText || '接口已返回，但未拿到可展示的文本内容。');
+      }
     } catch (error) {
       const err = error instanceof Error ? error.message : 'Unknown error';
-      const fallbackMessage: DisplayMessage = {
-        id: nextIdRef.current++,
-        role: 'assistant',
-        content: `请求失败：${err}`,
-      };
-      setMessages((prev) => [...prev, fallbackMessage]);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantMessageId
+            ? { ...message, thinking: '', content: `请求失败：${err}` }
+            : message
+        )
+      );
     } finally {
       setIsLoading(false);
+      setHasStreamStarted(false);
     }
   };
 
@@ -226,7 +391,7 @@ const AiChatPage = () => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <div ref={messageListRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.map((message) => {
           const isUser = message.role === 'user';
 
@@ -241,16 +406,26 @@ const AiChatPage = () => {
                     isUser
                       ? 'bg-primary text-white rounded-br-md'
                       : 'bg-white text-gray-800 rounded-bl-md'
-                  }`}
+                  } ${!isUser && !message.content && message.thinking ? 'hidden' : ''}`}
                 >
                   {message.content}
                 </div>
+
+                {!isUser && message.thinking && (
+                  <div
+                    ref={thinkingContainerRef}
+                    className="rounded-2xl rounded-bl-md px-4 py-3 text-xs leading-5 shadow-sm border border-gray-200 bg-gray-50 text-gray-500 whitespace-pre-wrap break-all max-h-36 overflow-y-auto scrollbar-hide"
+                  >
+                    <p className="font-medium text-gray-400 mb-1">Thinking...</p>
+                    {message.thinking}
+                  </div>
+                )}
               </div>
             </div>
           );
         })}
 
-        {isLoading && (
+        {isLoading && !hasStreamStarted && (
           <div className="flex justify-start">
             <div className="bg-white text-gray-500 rounded-2xl rounded-bl-md px-4 py-3 text-sm shadow-sm flex items-center gap-2">
               <span>AI 正在思考</span>
